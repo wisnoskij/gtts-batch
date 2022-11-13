@@ -1,29 +1,26 @@
 use clap::Parser;
-
-macro_rules! USAGE {
-	() => {
-		println!("Usage: gtts-batch [FOLDER] [OPTIONS]\n\
-			\tConvert folder of text to voice using gtts-cli\n\
-			Options:\n\
-			\tFOLDER        Folder to convert. Defaults to \".\"\n\
-			\t-c <count>    Stop processing on after the N files.\n\
-			\t-w <time>     TIME in minutes between file conversions. Default to 5.\n\
-			\t-h            Show this message and exit.");
-	};
-}
+use std::path::Path;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-   /// Name of the person to greet
-   #[arg(short, long)]
-   name: String,
+	/// Folder to convert
+	#[arg(short = None, long = None, value_name = "FOLDER",default_value_t = Path::new("."))]
+	folder: Path,
 
-   /// Number of times to greet
-   #[arg(short, long, default_value_t = 1)]
-   count: u8,
+	/// Start processing at FILE.txt alpha numerically (inclusive).
+	#[arg(short, long, value_name = "FILE")]
+	from: &'static str,
+
+	/// Stop processing at FILE.txt alpha numerically (inclusive).
+	#[arg(short, long, value_name = "FILE")]
+	to: &'static str,
 }
 
+// single file mode
+// lvl/LVL to level
+// recursive down dirs
+
 fn main() {
-	let args = Args::parse();
+	let args: Args = Args::parse();
 }
