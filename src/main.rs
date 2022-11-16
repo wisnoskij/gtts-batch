@@ -71,6 +71,4 @@ fn main() {
 	println!("{}", args.path.display());//TODO: remove
 	println!("is DIR:{}", args.path.is_dir());//TODO: remove
 	println!("is File:{}", args.path.is_file());//TODO: remove
-
-	
 }
