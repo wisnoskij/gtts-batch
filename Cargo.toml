@@ -12,3 +12,4 @@ about = '''Wrapper over gtts
 
 [dependencies]
 clap = { version = "4.0.23", features = ["derive"] }
+tempfile = "3.3.0"
