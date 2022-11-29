@@ -18,7 +18,7 @@ use std::io::{self, Write};
 const IN_EXT: &str = "txt";
 const OUT_EXT: &str = "mp3";
 const OUT_TMP: &str = "gtts_mp3";
-const FIXED_EXT: &str = "gtts_txt"; //TODO
+const FIXED_EXT: &str = "gtts_txt"; //TODO: Use
 
 
 /// Wrapper over gtts to handle large conversions. Batch converting many files,
@@ -92,7 +92,7 @@ struct Args{
 	splitstr: Vec<String>
 }
 
-// Parse the path:&str into a PathBuf, verify it exists.
+// Parse the &str into a PathBuf, verify it exists.
 fn parse_path(p: &str) -> Result<PathBuf, String>{
 	let path: PathBuf = PathBuf::from(p);
 	if(path.exists()){
@@ -101,19 +101,17 @@ fn parse_path(p: &str) -> Result<PathBuf, String>{
 	return(Err(format!("Supplied path ({}) does not exist", path.display())) as Result<PathBuf, String>);
 }
 
-//Check how many files will be overwritten and print to user.
+//TODO: Check how many files will be overwritten and print to user.
 
 // lvl/LVL to level '=>"
 // sd 'lvl' 'level' *.txt; sd 'LVL' 'level' *.txt; sd ' ' '' *.txt; sd '』' '' *.txt; sd '『' '' *.txt; sd '°' '' *.txt; sd ' Lv' ' level ' *.txt; sd ' lv' ' level ' *.txt
 
 //able to press key to stop at next finished file
 
-// Handles dealing with the files
-#[derive(Debug)] //TODO: remove
+// Holds list of files
 struct Files{
 	files_txt: Vec<PathBuf>,
 	files_mp3: Vec<PathBuf>,
-	files_gtts: Vec<PathBuf>,
 	dirs: Vec<PathBuf>,
 }
 impl Files{
@@ -122,7 +120,6 @@ impl Files{
 			files_txt : Vec::with_capacity(101),
 			// If overwriting files, I dont need to worry about existing mp3s
 			files_mp3 : if(overwrite){ Vec::with_capacity(0) }else{ Vec::with_capacity(101) },
-			files_gtts : Vec::with_capacity(101),
 			// If not recursing, I dont need to worry about directories
 			dirs : if(recurse){ Vec::with_capacity(11) }else{ Vec::with_capacity(0) },
 		}
@@ -130,17 +127,15 @@ impl Files{
 	fn sort(&mut self){
 		self.files_txt.sort();
 		self.files_mp3.sort();
-		self.files_gtts.sort();
 		self.dirs.sort();
 	}
 	fn shrink(&mut self){
 		self.files_txt.shrink_to_fit();
 		self.files_mp3.shrink_to_fit();
-		self.files_gtts.shrink_to_fit();
 		self.dirs.shrink_to_fit();
 	}
 	fn push_file(&mut self, file: PathBuf){
-		match file.extension().and_then(OsStr::to_str){
+		match(file.extension().and_then(OsStr::to_str)){
 			None =>{},
 			Some(IN_EXT) => self.files_txt.push(file),
 			Some(OUT_EXT) if self.files_mp3.capacity() > 0 => self.files_mp3.push(file), // Only care about mp3s if I am overwriting
@@ -160,9 +155,9 @@ impl Files{
 		}
 	}
 	// Checks if their was a already converted mp3 by the same name.
-	// Setting the overwrite argument garentees the array will be empty, so will alwasys ereturn true.
-	fn contains(&self, file_txt: &PathBuf)->bool{
-		return(self.files_gtts.binary_search(&file_txt).is_ok());
+	// Setting the overwrite argument garentees the array will be empty, so will alwasys return true.
+	fn contains(&self, file: &PathBuf)->bool{
+		return(self.files_mp3.binary_search(file).is_ok());
 	}
 }
 
@@ -171,8 +166,6 @@ fn main(){
 	let mut files: Files;
 
 	files = order_files(args); //TODO: When finished start recursion, if option selected.
-	
-	println!("{:?}", files);
 
 	iter_files(files);
 }
@@ -223,6 +216,9 @@ fn gtts(in_file: PathBuf, out_file: PathBuf){
 		"--output",
 		out_file_tmp.to_str().expect("The file's path should be readable"), //gtts-cli alwasys overwrites by default on my system
 		]);
+	println!("gtts-cli --lang en --file {} --output {}", in_file.to_str().expect("The file's path should be readable"), out_file_tmp.to_str().expect("The file's path should be readable"));
+	
+	if(true){ return; }
 
 	let gtts_output: Output = command.output().expect("gtts-batch should be able to make system calls");
 	io::stdout().write_all(&gtts_output.stdout).expect("gtts-batch should be able to write to stdout");
