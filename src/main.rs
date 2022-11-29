@@ -109,6 +109,7 @@ fn parse_path(p: &str) -> Result<PathBuf, String>{
 //able to press key to stop at next finished file
 
 // Holds list of files
+#[derive(Debug)]
 struct Files{
 	files_txt: Vec<PathBuf>,
 	files_mp3: Vec<PathBuf>,
@@ -162,25 +163,33 @@ impl Files{
 }
 
 fn main(){
-	let args: Args = Args::parse();
+	let mut args: Args = Args::parse();
+	
+	batch(&mut args);
+}
+
+fn batch(args: &mut Args){
 	let mut files: Files;
 
-	files = order_files(args); //TODO: When finished start recursion, if option selected.
+println!("START: {}\n\n", args.path.to_str().expect("dd"));
+	files = order_files(&args); // Read in Files
+	iter_files(&files); // Process Files
 
-	iter_files(files);
+	for dir in files.dirs{
+		args.path = dir;
+		batch(args);
+	}
 }
 
 // Sort files into struct
-fn order_files(args: Args) -> Files{
+fn order_files(args: &Args) -> Files{
 	let mut files: Files = Files::new(args.overwrite, args.recurse);
 	let mut tmp_path: PathBuf;
 
 	if(args.path.is_dir()){
-		for path in args.path.read_dir().expect("The path `FOLDER` is a directory and should be readable."){
-			files.push(path.expect("The directory `FOLDER` is readable, so it should not be erroring while iterating over it").path());
-		}
+		read_dir(&mut files, &args);
 	} else if(args.path.is_file()){
-		files.push(args.path);
+		files.push(args.path.to_path_buf());
 	}
 	
 	files.sort();
@@ -188,7 +197,13 @@ fn order_files(args: Args) -> Files{
 	return(files);
 }
 
-fn iter_files(files: Files){
+fn read_dir(files: &mut Files,args: &Args){
+	for path in args.path.read_dir().expect("The path `FOLDER` is a directory and should be readable."){
+		files.push(path.expect("The directory `FOLDER` is readable, so it should not be erroring while iterating over it").path());
+	}
+}
+
+fn iter_files(files: &Files){
 	let mut file_mp3: PathBuf;
 	for file_txt in &files.files_txt{
 		file_mp3 = file_txt.to_path_buf();
@@ -218,7 +233,7 @@ fn gtts(in_file: PathBuf, out_file: PathBuf){
 		]);
 	println!("gtts-cli --lang en --file {} --output {}", in_file.to_str().expect("The file's path should be readable"), out_file_tmp.to_str().expect("The file's path should be readable"));
 	
-	if(true){ return; }
+	//if(true){ return; }
 
 	let gtts_output: Output = command.output().expect("gtts-batch should be able to make system calls");
 	io::stdout().write_all(&gtts_output.stdout).expect("gtts-batch should be able to write to stdout");
