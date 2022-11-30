@@ -167,7 +167,7 @@ fn main(){
 
 	args = calc_wait(args);
 
-	batch(&mut args);
+	batch(args);
 }
 
 // calc wait time, in ms, store it args.wait.
@@ -182,42 +182,44 @@ fn calc_wait(mut args: Args) -> Args{
 	return(args);
 }
 
-fn batch(args: &mut Args){
+fn batch(mut args: Args) -> Args{
 	let mut files: Files; 
 
 	println!("START: {}\n\n", args.path.to_str().expect("dd"));
-	files = order_files(&args); // Read in Files
-	iter_files(&files, args.wait); // Process Files
+	(files, args) = order_files(args); // Read in Files
+	files = iter_files(files, args.wait); // Process Files
 
 	for dir in files.dirs{
 		args.path = dir;
-		batch(args);
+		args = batch(args);
 	}
+	return(args);
 }
 
 // Sort files into struct
-fn order_files(args: &Args) -> Files{
+fn order_files(args: Args) -> (Files, Args){
 	let mut files: Files = Files::new(args.overwrite, args.recurse);
 	let mut tmp_path: PathBuf;
 
 	if(args.path.is_dir()){
-		read_dir(&mut files, &args);
+		files = read_dir(files, &args);
 	} else if(args.path.is_file()){
 		files.push(args.path.to_path_buf());
 	}
 	
 	files.sort();
 	files.shrink();
-	return(files);
+	return(files, args);
 }
 
-fn read_dir(files: &mut Files,args: &Args){
+fn read_dir(mut files: Files, args: &Args) -> Files{
 	for path in args.path.read_dir().expect("The path `FOLDER` is a directory and should be readable."){
 		files.push(path.expect("The directory `FOLDER` is readable, so it should not be erroring while iterating over it").path());
 	}
+	return(files);
 }
 
-fn iter_files(files: &Files, wait: u64){
+fn iter_files(files: Files, wait: u64) -> Files{
 	let mut file_mp3: PathBuf;
 	let mut not_first: bool = false; // Flag used to run thread sleep code bwtween runs
 
@@ -232,6 +234,7 @@ fn iter_files(files: &Files, wait: u64){
 
 		gtts(file_txt.to_path_buf(), file_mp3);
 	}
+	return(files);
 }
 
 // Handles interfacing with gtts-cli
