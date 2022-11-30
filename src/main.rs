@@ -29,7 +29,7 @@ const FIXED_EXT: &str = "gtts_txt"; //TODO: Use
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args{
-	/// Folder to convert [TODO: if file instead of folder]
+	/// Folder to convert
 	#[arg(short = None, long = None, value_name = "FOLDER/FILE", value_parser = parse_path, default_value = ".")]
 	path: PathBuf,
 
@@ -84,7 +84,7 @@ struct Args{
 	#[arg(short, long, value_name = "BYTES", default_value_t = 40000)]
 	max: u32,
 
-	/// The string(s) to split at.
+	/// The string(s) to split at. [TODO]
 	///
 	/// Tries to split at first string, if this fails moves to second and so on. If all fail, just splits at the exact character.
 	/// Split happens after STRING.
@@ -165,7 +165,13 @@ impl Files{
 fn main(){
 	let mut args: Args = Args::parse();
 
-	// calc wait time, in ms, store it args.wait.
+	args = calc_wait(args);
+
+	batch(&mut args);
+}
+
+// calc wait time, in ms, store it args.wait.
+fn calc_wait(mut args: Args) -> Args{
 	if(args.waitms.is_some()){
 		// if milisecond wait exists, use that value
 		args.wait = args.waitms.unwrap();
@@ -173,14 +179,13 @@ fn main(){
 		// else, use the minute value (calc the ms value)
 		args.wait *= 60000;
 	}
-
-	batch(&mut args);
+	return(args);
 }
 
 fn batch(args: &mut Args){
-	let mut files: Files;
+	let mut files: Files; 
 
-println!("START: {}\n\n", args.path.to_str().expect("dd"));
+	println!("START: {}\n\n", args.path.to_str().expect("dd"));
 	files = order_files(&args); // Read in Files
 	iter_files(&files, args.wait); // Process Files
 
@@ -249,7 +254,7 @@ fn gtts(in_file: PathBuf, out_file: PathBuf){
 		]);
 	println!("gtts-cli --lang en --file {} --output {}", in_file.to_str().expect("The file's path should be readable"), out_file_tmp.to_str().expect("The file's path should be readable"));
 	
-	//if(true){ return; }
+	if(true){ return; } //TODO: TESTING
 
 	let gtts_output: Output = command.output().expect("gtts-batch should be able to make system calls");
 	io::stdout().write_all(&gtts_output.stdout).expect("gtts-batch should be able to write to stdout");
