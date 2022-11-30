@@ -13,7 +13,7 @@ use std::fs::{ReadDir, rename};
 use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::io::{self, Write};
-//use std::{thread, time};
+use std::{thread, time::Duration};
 
 const IN_EXT: &str = "txt";
 const OUT_EXT: &str = "mp3";
@@ -45,7 +45,7 @@ struct Args{
 	#[arg(short, long)]
 	overwrite: bool,
 
-	/// Recursively go into directories. [TODO]
+	/// Recursively go into directories.
 	#[arg(short, long)]
 	recurse: bool,
 
@@ -65,7 +65,7 @@ struct Args{
 
 	/// The <MINUTES> to wait in minutes.
 	#[arg(short, long, value_name = "MINUTES", default_value_t = 5)]
-	wait: u16,
+	wait: u64,
 
 	/// The <MILI> to wait in miliseconds (1/1000th of a second).
 	///
@@ -164,7 +164,16 @@ impl Files{
 
 fn main(){
 	let mut args: Args = Args::parse();
-	
+
+	// calc wait time, in ms, store it args.wait.
+	if(args.waitms.is_some()){
+		// if milisecond wait exists, use that value
+		args.wait = args.waitms.unwrap();
+	}else{
+		// else, use the minute value (calc the ms value)
+		args.wait *= 60000;
+	}
+
 	batch(&mut args);
 }
 
@@ -173,7 +182,7 @@ fn batch(args: &mut Args){
 
 println!("START: {}\n\n", args.path.to_str().expect("dd"));
 	files = order_files(&args); // Read in Files
-	iter_files(&files); // Process Files
+	iter_files(&files, args.wait); // Process Files
 
 	for dir in files.dirs{
 		args.path = dir;
@@ -203,12 +212,19 @@ fn read_dir(files: &mut Files,args: &Args){
 	}
 }
 
-fn iter_files(files: &Files){
+fn iter_files(files: &Files, wait: u64){
 	let mut file_mp3: PathBuf;
+	let mut not_first: bool = false; // Flag used to run thread sleep code bwtween runs
+
 	for file_txt in &files.files_txt{
 		file_mp3 = file_txt.to_path_buf();
 		file_mp3.set_extension(OUT_EXT);
 		if(files.contains(&file_mp3)){ continue; }
+
+		if(not_first){
+			thread::sleep(Duration::from_millis(wait));
+		} not_first = true;
+
 		gtts(file_txt.to_path_buf(), file_mp3);
 	}
 }
@@ -247,6 +263,7 @@ fn gtts(in_file: PathBuf, out_file: PathBuf){
 	}else{
 		println!("{}'s conversion to {} failed.", in_file.to_str().expect("The file's path should be readable"), out_file.to_str().expect("The file's path should be readable"));
 	}
+
 }
 
 // Check if path is a directory
