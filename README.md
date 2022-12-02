@@ -39,12 +39,12 @@ Options:
           
           [default: 5]
 
-      --waitms <MILI>
+  --waitms <MILI>
           The <MILI> to wait in miliseconds (1/1000th of a second).
           
           wait<time in munutes> is ignored if this argument is present.
 
-      --split <STRING>
+  --split <STRING>
           Split file(s) at every occurance of <STRING>. [TODO]
           
           <STRING> begins the split. This happens first, before checking for max length
@@ -54,7 +54,7 @@ Options:
           
           [default: 40000]
 
-      --splitstr <STRING>
+  --splitstr <STRING>
           The string(s) to split at. [TODO]
           
           Tries to split at first string, if this fails moves to second and so on. If all fail, just splits at the exact character. Split happens after STRING.
