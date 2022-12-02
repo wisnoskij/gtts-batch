@@ -12,13 +12,13 @@ use std::ffi::OsStr;
 use std::fs::{ReadDir, rename};
 use std::path::PathBuf;
 use std::process::{Command, Output};
-use std::io::{self, Write};
+use std::io::{self, Write}; 
 use std::{thread, time::Duration};
 
 const IN_EXT: &str = "txt";
 const OUT_EXT: &str = "mp3";
 const OUT_TMP: &str = "gtts_mp3";
-const FIXED_EXT: &str = "gtts_txt"; //TODO: Use
+const FIXED_EXT: &str = "gtts_txt";
 
 
 /// Wrapper over gtts to handle large conversions. Batch converting many files,
@@ -185,8 +185,16 @@ fn calc_wait(mut args: Args) -> Args{
 fn batch(mut args: Args) -> Args{
 	let mut files: Files; 
 
-	println!("START: {}\n\n", args.path.to_str().expect("dd"));
 	(files, args) = order_files(args); // Read in Files
+
+	// Warn/inform user the general scope of the proposed action. Note that we are not recusing yet so dont really have any idea how many files are being converted.
+	// Could improve this and get an actual estimated time by reading in file size, but I dont think that is needed.
+	if(files.dirs.len() > 0){ 
+		println!("Converting {} files in ({}) and recusing through {} directories.", files.files_txt.len(), args.path.to_str().expect("The path should be readable"), files.dirs.len());
+	}else{
+		println!("Converting {} files in ({}).", files.files_txt.len(), args.path.to_str().expect("The path should be readable"));
+	}
+
 	files = iter_files(files, args.wait); // Process Files
 
 	for dir in files.dirs{
@@ -221,12 +229,20 @@ fn read_dir(mut files: Files, args: &Args) -> Files{
 
 fn iter_files(files: Files, wait: u64) -> Files{
 	let mut file_mp3: PathBuf;
-	let mut not_first: bool = false; // Flag used to run thread sleep code bwtween runs
+	let mut not_first: bool = false; // Flag used to run thread sleep code between runs
+	let mut gtts_txt: Vec<PathBuf> = Vec::new();
 
 	for file_txt in &files.files_txt{
 		file_mp3 = file_txt.to_path_buf();
 		file_mp3.set_extension(OUT_EXT);
-		if(files.contains(&file_mp3)){ continue; }
+
+		if(files.contains(&file_mp3)){ // Skip files with already existing mp3s, unless we are overwriting
+			println!("Skipping {}. An mp3 already exists.", file_mp3.to_str().expect("The file's path should be readable"));
+			continue;
+		}
+
+		//TODO: normalize
+
 
 		if(not_first){
 			thread::sleep(Duration::from_millis(wait));
@@ -242,8 +258,7 @@ fn gtts(in_file: PathBuf, out_file: PathBuf){
 	let mut out_file_tmp: PathBuf = in_file.clone();
 	out_file_tmp.set_extension(OUT_TMP);
 
-	if !check_not_exist(&out_file_tmp) ||
-	!check_not_exist(&out_file){ //incase it is a directory
+	if(!check_not_exist(&out_file_tmp) || !check_not_exist(&out_file)){ // incase it is a directory
 		println!("Skipping {}", in_file.to_str().expect("The file's path should be readable"));
 		return;
 	}
@@ -255,21 +270,23 @@ fn gtts(in_file: PathBuf, out_file: PathBuf){
 		"--output",
 		out_file_tmp.to_str().expect("The file's path should be readable"), //gtts-cli alwasys overwrites by default on my system
 		]);
-	println!("gtts-cli --lang en --file {} --output {}", in_file.to_str().expect("The file's path should be readable"), out_file_tmp.to_str().expect("The file's path should be readable"));
 	
-	if(true){ return; } //TODO: TESTING
+	println!("\nConverting: {}", in_file.to_str().expect("The file's path should be readable"));
+	
+	//if(true){ return; } //TODO: TESTING
 
 	let gtts_output: Output = command.output().expect("gtts-batch should be able to make system calls");
 	io::stdout().write_all(&gtts_output.stdout).expect("gtts-batch should be able to write to stdout");
 	io::stderr().write_all(&gtts_output.stderr).expect("gtts-batch should be able to write to stderr");
 	io::stderr().flush().expect("gtts-batch should be able to flush stderr");
-	println!("Status: {}", gtts_output.status);
+	
+	println!("{}", gtts_output.status);
 
 	let move_result: io::Result<()> = std::fs::rename(out_file_tmp.to_str().expect("The file's path should be readable"), out_file.to_str().expect("The file's path should be readable"));
 	if move_result.is_ok(){
-		println!("{}'s conversion to {} finsihed.", in_file.to_str().expect("The file's path should be readable"), out_file.to_str().expect("The file's path should be readable"));
+		println!("Conversion Succeeded.");
 	}else{
-		println!("{}'s conversion to {} failed.", in_file.to_str().expect("The file's path should be readable"), out_file.to_str().expect("The file's path should be readable"));
+		println!("Conversion Failed.");
 	}
 
 }
