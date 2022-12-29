@@ -8,11 +8,17 @@
 //CLi argument management
 use clap::Parser;
 
+use std::fs::File;
+use std::io::BufRead;
+use std::io::BufReader;
 use std::ffi::OsStr;
 use std::fs::{ReadDir, rename};
+use std::io::Read;
+use std::io::Seek;
+use std::iter::Filter;
 use std::path::PathBuf;
 use std::process::{Command, Output};
-use std::io::{self, Write}; 
+use std::io::{self, Write, ErrorKind}; 
 use std::{thread, time::Duration};
 
 const IN_EXT: &str = "txt";
@@ -20,13 +26,12 @@ const OUT_EXT: &str = "mp3";
 const OUT_TMP: &str = "gtts_mp3";
 const FIXED_EXT: &str = "gtts_txt";
 
-
 /// Wrapper over gtts to handle large conversions. Batch converting many files,
 /// and spitting up large files into multiple smaller files.
 
 
-/// Works with Clap to handle and store all the command lines arguments
-#[derive(Parser, Debug)]
+// Works with Clap to handle and store all the command lines arguments
+#[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args{
 	/// Folder to convert
@@ -54,12 +59,16 @@ struct Args{
 	shutdown: bool,
 
 	/// Remove non alphanumeric characters and normal punctuation. [TODO]
+	///
+	/// Done after splitting, so these unusual characters can be used for splitting purposes.
 	#[arg(short, long)]
 	normalize: bool,
 
 	/// Fix troublesome abbreviations. [TODO]
 	///
 	/// "LV" is considered some currency, so I fix that as well as other level abreviations.
+	/// "MP" Is read as Mega Pixel.
+	/// [TODO]: some method to pick which to apply.
 	#[arg(short, long)]
 	abbreviations: bool,
 
@@ -76,20 +85,25 @@ struct Args{
 	/// Split file(s) at every occurance of <STRING>. [TODO]
 	///
 	/// <STRING> begins the split.
-	/// This happens first, before checking for max length
+	/// Designed as the main user facing split mechanic. Designed around splitting by chapter.
+	/// If present this is the first file modification run.
 	#[arg(short = None, long, value_name = "STRING")]
-	split: Option<String>,
+	split: Option<Vec<u8>>,
 
 	/// The max length in bytes a single file can be before it gets split. [TODO]: Figure out if I am splitting by character or byte.
 	#[arg(short, long, value_name = "BYTES", default_value_t = 40000)]
-	max: u32,
+	max: usize,
 
-	/// The string(s) to split at. [TODO]
+	/// The string(s) to split at if file is over max length. [TODO]
 	///
 	/// Tries to split at first string, if this fails moves to second and so on. If all fail, just splits at the exact character.
 	/// Split happens after STRING.
 	#[arg(short = None, long, value_name = "STRING", default_values_t = vec![String::from("\n\n"), String::from("\n"), String::from(".")])]
-	splitstr: Vec<String>
+	splitstr: Vec<String>,
+
+	/// Runs in testing mode, does everything except for calling google translate services and waiting between files. [TODO]: prevent shutoff from running if in testing mode. Delete tmp files
+	#[arg(short = None, long)]
+	test: bool
 }
 
 // Parse the &str into a PathBuf, verify it exists.
@@ -101,7 +115,6 @@ fn parse_path(p: &str) -> Result<PathBuf, String>{
 	return(Err(format!("Supplied path ({}) does not exist", path.display())) as Result<PathBuf, String>);
 }
 
-//TODO: Check how many files will be overwritten and print to user.
 
 // lvl/LVL to level '=>"
 // sd 'lvl' 'level' *.txt; sd 'LVL' 'level' *.txt; sd ' ' '' *.txt; sd '』' '' *.txt; sd '『' '' *.txt; sd '°' '' *.txt; sd ' Lv' ' level ' *.txt; sd ' lv' ' level ' *.txt
@@ -109,7 +122,6 @@ fn parse_path(p: &str) -> Result<PathBuf, String>{
 //able to press key to stop at next finished file
 
 // Holds list of files
-#[derive(Debug)]
 struct Files{
 	files_txt: Vec<PathBuf>,
 	files_mp3: Vec<PathBuf>,
@@ -162,6 +174,8 @@ impl Files{
 	}
 }
 
+
+
 fn main(){
 	let mut args: Args = Args::parse();
 
@@ -195,7 +209,7 @@ fn batch(mut args: Args) -> Args{
 		println!("Converting {} files in ({}).", files.files_txt.len(), args.path.to_str().expect("The path should be readable"));
 	}
 
-	files = iter_files(files, args.wait); // Process Files
+	(files, args) = iter_files(files, args); // Process Files
 
 	for dir in files.dirs{
 		args.path = dir;
@@ -227,34 +241,107 @@ fn read_dir(mut files: Files, args: &Args) -> Files{
 	return(files);
 }
 
-fn iter_files(files: Files, wait: u64) -> Files{
+fn iter_files(files: Files, args: Args) -> (Files, Args){
 	let mut file_mp3: PathBuf;
 	let mut not_first: bool = false; // Flag used to run thread sleep code between runs
-	let mut gtts_txt: Vec<PathBuf> = Vec::new();
+	let mut reader: BufReader<File>;
+	let mut buf: Vec<u8> = Vec::with_capacity(40000); //temp buf
+
 
 	for file_txt in &files.files_txt{
 		file_mp3 = file_txt.to_path_buf();
 		file_mp3.set_extension(OUT_EXT);
 
-		if(files.contains(&file_mp3)){ // Skip files with already existing mp3s, unless we are overwriting
+		// Skip files with already existing mp3s, unless we are overwriting
+		if(files.contains(&file_mp3)){
 			println!("Skipping {}. An mp3 already exists.", file_mp3.to_str().expect("The file's path should be readable"));
 			continue;
 		}
 
-		//TODO: normalize
-
-
-		if(not_first){
-			thread::sleep(Duration::from_millis(wait));
+		// Wait between calls to google translate services to not overload their servers. Skip if in testing mode.
+		if(!args.test && not_first){
+			thread::sleep(Duration::from_millis(args.wait.clone()));
 		} not_first = true;
 
-		gtts(file_txt.to_path_buf(), file_mp3);
+
+		reader = BufReader::new(File::open(file_txt).expect("The file should exist and be readable."));
+		while(has_data_left(&mut reader).expect("The buffer should be readable/mutable."))
+		{ // has_data_left is unstable beta apparentally. Look out for unexpected results.
+			if let Some(ref split_str) = args.split { // Split files at --split <STRING>
+				(buf, reader) = split_at_str(split_str, buf, reader);
+			}else{
+				reader.read_to_end(&mut buf).expect("The buffer should be readable/mutable.");
+			}
+
+			if(buf.len() > args.max){
+
+			}
+			//maxlength
+			//if(args.normalize)
+			//}if(args.abbreviations){}
+
+			gtts(file_txt, &file_mp3, args.test);
+			//cleanup
+		}
 	}
-	return(files);
+	return(files, args);
+}
+
+/*
+	/// The max length in bytes a single file can be before it gets split. [TODO]: Figure out if I am splitting by character or byte.
+	max: u32,
+
+	/// The string(s) to split at if file is over max length. [TODO]
+	///
+	/// Tries to split at first string, if this fails moves to second and so on. If all fail, just splits at the exact character.
+	/// Split happens after STRING.
+	splitstr: Vec<String>,
+
+	/// Remove non alphanumeric characters and normal punctuation. [TODO]
+	///
+	/// Done after splitting, so these unusual characters can be used for splitting purposes.
+	#[arg(short, long)]
+	normalize: bool,
+
+	/// Fix troublesome abbreviations. [TODO]
+	///
+	/// "LV" is considered some currency, so I fix that as well as other level abreviations.
+	/// "MP" Is read as Mega Pixel.
+	/// [TODO]: some method to pick which to apply.
+	#[arg(short, long)]
+	abbreviations: bool,
+*/
+
+fn split_at_str(split_str: &Vec<u8>, mut buf: Vec<u8>, mut reader: BufReader<File>) -> (Vec<u8>, BufReader<File>){
+	reader.read_until(split_str[split_str.len()], &mut buf).expect("The file should be readable");
+
+	// has_data_left is unstable beta apparentally. Look out for unexpected results.
+	if(!has_data_left(&mut reader).expect("The buffer should be readable/mutable.")){
+		return(buf, reader);
+	}
+	if(buf.ends_with(split_str)){ // If found and read the split_str, remove from buf, add back to reader.
+		// Used saturating_sub to handle the case where there aren't N elements in the vector
+		buf.truncate(buf.len().saturating_sub(split_str.len()));
+		reader.seek_relative(i64::try_from(split_str.len()).expect("split_str better be WAY smaller than an i64 or something really weird is going on.") * -1).expect("Should be able to unseek the search string");
+		return(buf, reader);
+	}
+	return(split_at_str(split_str, buf, reader));
+}
+
+// Replacement for unstable BufReader.has_data_left() TODO: Replace with official fn when stable
+fn has_data_left(reader: &mut BufReader<File>) -> io::Result<bool>{
+	match reader.read_exact(&mut [0]) { // Read single byte (passing single element array to "hold" that byte)
+		Ok(_) => {
+			reader.seek_relative(-1).expect("Should be able to unseek the single byte I just read"); //unread then return
+			return(Ok(true));
+		},
+		Err(e) if e.kind() == ErrorKind::UnexpectedEof => return(Ok(false)),
+		Err(e) => return(Err(e)),
+	};
 }
 
 // Handles interfacing with gtts-cli
-fn gtts(in_file: PathBuf, out_file: PathBuf){
+fn gtts(in_file: &PathBuf, out_file: &PathBuf, test: bool){
 	let mut out_file_tmp: PathBuf = in_file.clone();
 	out_file_tmp.set_extension(OUT_TMP);
 
@@ -264,31 +351,41 @@ fn gtts(in_file: PathBuf, out_file: PathBuf){
 	}
 
 	let mut command: Command = Command::new("gtts-cli");
-	command.args(["--lang", "en", "--file"]);
-	command.args([
+	command.args(["--lang", "en", "--file",
 		in_file.to_str().expect("The file's path should be readable"),
 		"--output",
-		out_file_tmp.to_str().expect("The file's path should be readable"), //gtts-cli alwasys overwrites by default on my system
+		out_file_tmp.to_str().expect("The file's path should be readable"), //gtts-cli always overwrites by default on my system
 		]);
-	
-	println!("\nConverting: {}", in_file.to_str().expect("The file's path should be readable"));
-	
-	//if(true){ return; } //TODO: TESTING
 
-	let gtts_output: Output = command.output().expect("gtts-batch should be able to make system calls");
+	println!("\nConverting: {}", in_file.to_str().expect("The file's path should be readable"));
+
+	if(test){ return; }
+
+	// Make gtts sys call, print output, then IF success rename
+	if(print_output(command.output().expect("gtts-batch should be able to make system calls")).status.success()){
+		rename_tmp_fin(out_file_tmp, out_file);
+	}
+}
+
+// Print output of gtts_cli sys call
+fn print_output(gtts_output: Output) -> Output{
 	io::stdout().write_all(&gtts_output.stdout).expect("gtts-batch should be able to write to stdout");
 	io::stderr().write_all(&gtts_output.stderr).expect("gtts-batch should be able to write to stderr");
 	io::stderr().flush().expect("gtts-batch should be able to flush stderr");
-	
 	println!("{}", gtts_output.status);
 
+	return(gtts_output);
+}
+
+// Rename temp file to final output file (gtts_tmp to .mp3)
+fn rename_tmp_fin(out_file_tmp: PathBuf, out_file: &PathBuf) -> (PathBuf, &PathBuf){
 	let move_result: io::Result<()> = std::fs::rename(out_file_tmp.to_str().expect("The file's path should be readable"), out_file.to_str().expect("The file's path should be readable"));
 	if move_result.is_ok(){
 		println!("Conversion Succeeded.");
 	}else{
 		println!("Conversion Failed.");
 	}
-
+	return (out_file_tmp, out_file);
 }
 
 // Check if path is a directory
