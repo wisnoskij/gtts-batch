@@ -50,7 +50,7 @@ struct Args{
 	recurse: bool,
 
 	/// Shutdown system after finishing. [TODO]
-	#[arg(short, long)]
+	#[arg(short = None, long)]
 	shutdown: bool,
 
 	/// Remove non alphanumeric characters and normal punctuation. [TODO]
@@ -82,8 +82,8 @@ struct Args{
 	/// <STRING> begins the split.
 	/// Designed as the main user facing split mechanic. Designed around splitting by chapter.
 	/// If present this is the first file modification run.
-	#[arg(short = None, long, value_name = "STRING")]
-	split: Option<Vec<u8>>,
+	#[arg(short, long, value_name = "STRING")]
+	split: Option<String>,
 
 	/// The max length in bytes a single file can be before it gets split. [TODO]: Figure out if I am splitting by character or byte.
 	#[arg(short, long, value_name = "BYTES", default_value_t = 40000)]
@@ -102,14 +102,13 @@ struct Args{
 }
 
 // Parse the &str into a PathBuf, verify it exists.
-fn parse_path(p: &str) -> Result<PathBuf, String>{
+fn parse_path(p: &str) -> Result<PathBuf, String> {
 	let path: PathBuf = PathBuf::from(p);
 	if(path.exists()){
 		return(Ok(path) as Result<PathBuf, String>);
 	}
 	return(Err(format!("Supplied path ({}) does not exist", path.display())) as Result<PathBuf, String>);
 }
-
 
 // lvl/LVL to level '=>"
 // sd 'lvl' 'level' *.txt; sd 'LVL' 'level' *.txt; sd ' ' '' *.txt; sd '』' '' *.txt; sd '『' '' *.txt; sd '°' '' *.txt; sd ' Lv' ' level ' *.txt; sd ' lv' ' level ' *.txt
@@ -223,7 +222,7 @@ fn order_files(args: Args) -> (Files, Args){
 	} else if(args.path.is_file()){
 		files.push(args.path.to_path_buf());
 	}
-	
+
 	files.sort();
 	files.shrink();
 	return(files, args);
@@ -239,6 +238,7 @@ fn read_dir(mut files: Files, args: &Args) -> Files{
 fn iter_files(files: Files, args: Args) -> (Files, Args){
 	let mut file_mp3: PathBuf;
 	let mut file_tmp: PathBuf;
+	let mut split_count: u16; // Used to track the number of splits a file gets to iterate the output name
 	let mut not_first: bool = false; // Flag used to run thread sleep code between runs
 	let mut reader: BufReader<File>;
 	let mut buf: Vec<u8> = Vec::with_capacity(40000); //temp buf
@@ -246,6 +246,7 @@ fn iter_files(files: Files, args: Args) -> (Files, Args){
 
 
 	for file_txt in &files.files_txt {
+		split_count = 0;
 		file_mp3 = file_txt.to_path_buf();
 		file_mp3.set_extension(OUT_EXT);
 
@@ -265,7 +266,7 @@ fn iter_files(files: Files, args: Args) -> (Files, Args){
 		while(has_data_left(&mut reader).expect("The buffer should be readable/mutable.")) //TODO: Switch to std has_data_left when no longer unstable.
 		{
 			if let Some(ref split_str) = args.split { // Split files at --split <STRING>
-				(buf, reader) = split_at_str(split_str, buf, reader);
+				(buf, reader) = split_at_str(split_str.as_bytes(), buf, reader);
 				if(!changed_flag && has_data_left(&mut reader).expect("The buffer should be readable/mutable.")){
 					changed_flag = true
 				}
@@ -278,54 +279,58 @@ fn iter_files(files: Files, args: Args) -> (Files, Args){
 			//if(args.normalize)
 			//}if(args.abbreviations){}
 
+
 			// If the input file has been split or modified in anyway
 			// store the changed/split input into a tmp file
-			//file_txt.set_extension(FIXED_EXT);
 			if(changed_flag) {
+				split_count += 1;
 				file_tmp = file_txt.clone(); // TODO: figure out how to just return a cloned copy at the forloop iter
-				file_tmp.set_extension(FIXED_EXT);
-				File::create(file_tmp).expect("I should be able to create a tmp file")
-					.write_all(&buf).expect("I should be able to write buf to file");
+				file_tmp.set_extension(format!("{:03}.{}", split_count, FIXED_EXT));
+				File::create(&file_tmp).expect("Create a tmp file")
+				.write_all(&buf).expect("Write buf to rmp file");
+				gtts(&file_tmp, &file_mp3, args.test);
+				fs::remove_file(file_tmp).expect("Delete tmp file after use.");
+			}else{
+				gtts(&file_txt, &file_mp3, args.test);
 			}
-
-			gtts(&file_txt, &file_mp3, args.test);
-			
-			// If using a tmp file to store modifed input, delete after use.
-			if(changed_flag) {
-				fs::remove_file(file_txt).expect("");
-			}
+			buf.clear();
 		}
 	}
 	return(files, args);
 }
 
 /*TODO:remove
-	/// The max length in bytes a single file can be before it gets split. [TODO]: Figure out if I am splitting by character or byte.
-	max: u32,
+/// The max length in bytes a single file can be before it gets split. [TODO]: Figure out if I am splitting by character or byte.
+max: u32,
 
-	/// The string(s) to split at if file is over max length. [TODO]
-	///
-	/// Tries to split at first string, if this fails moves to second and so on. If all fail, just splits at the exact character.
-	/// Split happens after STRING.
-	splitstr: Vec<String>,
+/// The string(s) to split at if file is over max length. [TODO]
+///
+/// Tries to split at first string, if this fails moves to second and so on. If all fail, just splits at the exact character.
+/// Split happens after STRING.
+splitstr: Vec<String>,
 
-	/// Remove non alphanumeric characters and normal punctuation. [TODO]
-	///
-	/// Done after splitting, so these unusual characters can be used for splitting purposes.
-	#[arg(short, long)]
-	normalize: bool,
+/// Remove non alphanumeric characters and normal punctuation. [TODO]
+///
+/// Done after splitting, so these unusual characters can be used for splitting purposes.
+#[arg(short, long)]
+normalize: bool,
 
-	/// Fix troublesome abbreviations. [TODO]
-	///
-	/// "LV" is considered some currency, so I fix that as well as other level abreviations.
-	/// "MP" Is read as Mega Pixel.
-	/// [TODO]: some method to pick which to apply.
-	#[arg(short, long)]
-	abbreviations: bool,
+/// Fix troublesome abbreviations. [TODO]
+///
+/// "LV" is considered some currency, so I fix that as well as other level abreviations.
+/// "MP" Is read as Mega Pixel.
+/// [TODO]: some method to pick which to apply.
+#[arg(short, long)]
+abbreviations: bool,
 */
 
-fn split_at_str(split_str: &Vec<u8>, mut buf: Vec<u8>, mut reader: BufReader<File>) -> (Vec<u8>, BufReader<File>){
-	reader.read_until(split_str[split_str.len()], &mut buf).expect("The file should be readable");
+fn split_at_str(split_str: &[u8], mut buf: Vec<u8>, mut reader: BufReader<File>) -> (Vec<u8>, BufReader<File>){
+	reader.read_until(split_str[split_str.len() - 1], &mut buf).expect("The file should be readable");
+
+	// If the reader starts with the split, look for next split
+	if(buf.len() == split_str.len()){
+		reader.read_until(split_str[split_str.len() - 1], &mut buf).expect("The file should be readable");
+	}
 
 	// has_data_left is unstable beta apparentally. Look out for unexpected results.
 	if(!has_data_left(&mut reader).expect("The buffer should be readable/mutable.")){
@@ -334,7 +339,9 @@ fn split_at_str(split_str: &Vec<u8>, mut buf: Vec<u8>, mut reader: BufReader<Fil
 	if(buf.ends_with(split_str)){ // If found and read the split_str, remove from buf, add back to reader.
 		// Used saturating_sub to handle the case where there aren't N elements in the vector
 		buf.truncate(buf.len().saturating_sub(split_str.len()));
-		reader.seek_relative(i64::try_from(split_str.len()).expect("split_str better be WAY smaller than an i64 or something really weird is going on.") * -1).expect("Should be able to unseek the search string");
+		reader.seek_relative(i64::try_from(split_str.len())
+			.expect("split_str better be WAY smaller than an i64 or something really weird is going on.") * -1) // Negate
+		.expect("Should be able to unseek the search string");
 		return(buf, reader);
 	}
 	return(split_at_str(split_str, buf, reader));
@@ -395,7 +402,7 @@ fn print_output(gtts_output: Output) -> Output{
 // Rename temp file to final output file (gtts_tmp to .mp3)
 fn rename_tmp_fin(out_file_tmp: PathBuf, out_file: &PathBuf) -> (PathBuf, &PathBuf){
 	let move_result: io::Result<()> = std::fs::rename(out_file_tmp.to_str().expect("The file's path should be readable")
-						, out_file.to_str().expect("The file's path should be readable"));
+		, out_file.to_str().expect("The file's path should be readable"));
 	if move_result.is_ok(){
 		println!("Conversion Succeeded.");
 	}else{
