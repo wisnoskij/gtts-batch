@@ -8,17 +8,12 @@
 //CLi argument management
 use clap::Parser;
 
-use std::fs::File;
-use std::io::BufRead;
-use std::io::BufReader;
 use std::ffi::OsStr;
-use std::fs::{ReadDir, rename};
-use std::io::Read;
-use std::io::Seek;
+use std::fs::{self, ReadDir, rename, File};
+use std::io::{self, Seek, Read, BufReader, BufRead, Write, ErrorKind};
 use std::iter::Filter;
 use std::path::PathBuf;
 use std::process::{Command, Output};
-use std::io::{self, Write, ErrorKind}; 
 use std::{thread, time::Duration};
 
 const IN_EXT: &str = "txt";
@@ -243,12 +238,14 @@ fn read_dir(mut files: Files, args: &Args) -> Files{
 
 fn iter_files(files: Files, args: Args) -> (Files, Args){
 	let mut file_mp3: PathBuf;
+	let mut file_tmp: PathBuf;
 	let mut not_first: bool = false; // Flag used to run thread sleep code between runs
 	let mut reader: BufReader<File>;
 	let mut buf: Vec<u8> = Vec::with_capacity(40000); //temp buf
+	let mut changed_flag: bool;
 
 
-	for file_txt in &files.files_txt{
+	for file_txt in &files.files_txt {
 		file_mp3 = file_txt.to_path_buf();
 		file_mp3.set_extension(OUT_EXT);
 
@@ -263,31 +260,46 @@ fn iter_files(files: Files, args: Args) -> (Files, Args){
 			thread::sleep(Duration::from_millis(args.wait.clone()));
 		} not_first = true;
 
-
+		changed_flag = false;
 		reader = BufReader::new(File::open(file_txt).expect("The file should exist and be readable."));
-		while(has_data_left(&mut reader).expect("The buffer should be readable/mutable."))
-		{ // has_data_left is unstable beta apparentally. Look out for unexpected results.
+		while(has_data_left(&mut reader).expect("The buffer should be readable/mutable.")) //TODO: Switch to std has_data_left when no longer unstable.
+		{
 			if let Some(ref split_str) = args.split { // Split files at --split <STRING>
 				(buf, reader) = split_at_str(split_str, buf, reader);
+				if(!changed_flag && has_data_left(&mut reader).expect("The buffer should be readable/mutable.")){
+					changed_flag = true
+				}
 			}else{
 				reader.read_to_end(&mut buf).expect("The buffer should be readable/mutable.");
 			}
 
-			if(buf.len() > args.max){
-
-			}
+			//if(buf.len() > args.max){}
 			//maxlength
 			//if(args.normalize)
 			//}if(args.abbreviations){}
 
-			gtts(file_txt, &file_mp3, args.test);
-			//cleanup
+			// If the input file has been split or modified in anyway
+			// store the changed/split input into a tmp file
+			//file_txt.set_extension(FIXED_EXT);
+			if(changed_flag) {
+				file_tmp = file_txt.clone(); // TODO: figure out how to just return a cloned copy at the forloop iter
+				file_tmp.set_extension(FIXED_EXT);
+				File::create(file_tmp).expect("I should be able to create a tmp file")
+					.write_all(&buf).expect("I should be able to write buf to file");
+			}
+
+			gtts(&file_txt, &file_mp3, args.test);
+			
+			// If using a tmp file to store modifed input, delete after use.
+			if(changed_flag) {
+				fs::remove_file(file_txt).expect("");
+			}
 		}
 	}
 	return(files, args);
 }
 
-/*
+/*TODO:remove
 	/// The max length in bytes a single file can be before it gets split. [TODO]: Figure out if I am splitting by character or byte.
 	max: u32,
 
@@ -329,10 +341,12 @@ fn split_at_str(split_str: &Vec<u8>, mut buf: Vec<u8>, mut reader: BufReader<Fil
 }
 
 // Replacement for unstable BufReader.has_data_left() TODO: Replace with official fn when stable
-fn has_data_left(reader: &mut BufReader<File>) -> io::Result<bool>{
-	match reader.read_exact(&mut [0]) { // Read single byte (passing single element array to "hold" that byte)
+fn has_data_left(reader: &mut BufReader<File>) -> io::Result<bool> {
+	// Read single byte (passing single element array to "hold" that byte)
+	match reader.read_exact(&mut [0]) {
 		Ok(_) => {
-			reader.seek_relative(-1).expect("Should be able to unseek the single byte I just read"); //unread then return
+			//unread single byte, then return
+			reader.seek_relative(-1).expect("Should be able to unseek the single byte I just read");
 			return(Ok(true));
 		},
 		Err(e) if e.kind() == ErrorKind::UnexpectedEof => return(Ok(false)),
@@ -354,7 +368,8 @@ fn gtts(in_file: &PathBuf, out_file: &PathBuf, test: bool){
 	command.args(["--lang", "en", "--file",
 		in_file.to_str().expect("The file's path should be readable"),
 		"--output",
-		out_file_tmp.to_str().expect("The file's path should be readable"), //gtts-cli always overwrites by default on my system
+		//gtts-cli always overwrites by default on my system
+		out_file_tmp.to_str().expect("The file's path should be readable"),
 		]);
 
 	println!("\nConverting: {}", in_file.to_str().expect("The file's path should be readable"));
@@ -379,7 +394,8 @@ fn print_output(gtts_output: Output) -> Output{
 
 // Rename temp file to final output file (gtts_tmp to .mp3)
 fn rename_tmp_fin(out_file_tmp: PathBuf, out_file: &PathBuf) -> (PathBuf, &PathBuf){
-	let move_result: io::Result<()> = std::fs::rename(out_file_tmp.to_str().expect("The file's path should be readable"), out_file.to_str().expect("The file's path should be readable"));
+	let move_result: io::Result<()> = std::fs::rename(out_file_tmp.to_str().expect("The file's path should be readable")
+						, out_file.to_str().expect("The file's path should be readable"));
 	if move_result.is_ok(){
 		println!("Conversion Succeeded.");
 	}else{
@@ -391,7 +407,8 @@ fn rename_tmp_fin(out_file_tmp: PathBuf, out_file: &PathBuf) -> (PathBuf, &PathB
 // Check if path is a directory
 fn check_not_exist(file: &PathBuf)->bool{
 	if file.is_dir(){
-		println!("{} is a directory, and it should not be. Please delete, rename, or move this directory", file.to_str().expect("The file's path should be readable"));
+		println!("{} is a directory, and it should not be. Please delete, rename, or move this directory"
+			, file.to_str().expect("The file's path should be readable"));
 		return(false);
 	}
 	return(true);
