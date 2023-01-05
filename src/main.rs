@@ -85,18 +85,24 @@ struct Args{
 	#[arg(short, long, value_name = "STRING")]
 	split: Option<String>,
 
-	/// The max length in bytes a single file can be before it gets split. [TODO]: Figure out if I am splitting by character or byte.
-	#[arg(short, long, value_name = "BYTES", default_value_t = 40000)]
+	/// The max length in bytes a single file can be before it gets split.
+	/// Use max length to figure out number of splits a file needs,
+	/// then split at average.
+	/// [TODO]: Figure out if I am splitting by character or byte.
+	#[arg(short, long, value_name = "MAX BYTES", default_value_t = 40000)]
 	max: usize,
 
 	/// The string(s) to split at if file is over max length. [TODO]
 	///
-	/// Tries to split at first string, if this fails moves to second and so on. If all fail, just splits at the exact character.
+	/// Tries to split at first string, if this fails moves to second and so on. If all fail
+	/// just splits at the exact character.
 	/// Split happens after STRING.
-	#[arg(short = None, long, value_name = "STRING", default_values_t = vec![String::from("\n\n"), String::from("\n"), String::from(".")])]
+	#[arg(short = None, long, value_name = "STRING", default_values_t = 
+		vec![String::from("\n\n"), String::from("\n"), String::from(".")])]
 	splitstr: Vec<String>,
 
-	/// Runs in testing mode, does everything except for calling google translate services and waiting between files. [TODO]: prevent shutoff from running if in testing mode. Delete tmp files
+	/// Runs in testing mode, does everything except for calling google translate services and waiting between files.
+	/// [TODO]: prevent shutoff from running if in testing mode. Delete tmp files
 	#[arg(short = None, long)]
 	test: bool
 }
@@ -111,7 +117,8 @@ fn parse_path(p: &str) -> Result<PathBuf, String> {
 }
 
 // lvl/LVL to level '=>"
-// sd 'lvl' 'level' *.txt; sd 'LVL' 'level' *.txt; sd ' ' '' *.txt; sd '』' '' *.txt; sd '『' '' *.txt; sd '°' '' *.txt; sd ' Lv' ' level ' *.txt; sd ' lv' ' level ' *.txt
+// sd 'lvl' 'level' *.txt; sd 'LVL' 'level' *.txt; sd ' ' '' *.txt; sd '』' '' *.txt; sd '『' '' *.txt; sd '°' '' *.txt;
+// sd ' Lv' ' level ' *.txt; sd ' lv' ' level ' *.txt
 
 //able to press key to stop at next finished file
 
@@ -145,7 +152,8 @@ impl Files{
 		match(file.extension().and_then(OsStr::to_str)){
 			None =>{},
 			Some(IN_EXT) => self.files_txt.push(file),
-			Some(OUT_EXT) if self.files_mp3.capacity() > 0 => self.files_mp3.push(file), // Only care about mp3s if I am overwriting
+			// Only care about mp3s if I am overwriting
+			Some(OUT_EXT) if self.files_mp3.capacity() > 0 => self.files_mp3.push(file),
 			Some(&_) =>{},
 		}
 	}
@@ -195,12 +203,15 @@ fn batch(mut args: Args) -> Args{
 
 	(files, args) = order_files(args); // Read in Files
 
-	// Warn/inform user the general scope of the proposed action. Note that we are not recusing yet so dont really have any idea how many files are being converted.
+	// Warn/inform user the general scope of the proposed action.
+	// Note that we are not recusing yet so dont really have any idea how many files are being converted.
 	// Could improve this and get an actual estimated time by reading in file size, but I dont think that is needed.
 	if(files.dirs.len() > 0){ 
-		println!("Converting {} files in ({}) and recusing through {} directories.", files.files_txt.len(), args.path.to_str().expect("The path should be readable"), files.dirs.len());
+		println!("Converting {} files in ({}) and recusing through {} directories.", files.files_txt.len()
+			, args.path.to_str().expect("The path should be readable"), files.dirs.len());
 	}else{
-		println!("Converting {} files in ({}).", files.files_txt.len(), args.path.to_str().expect("The path should be readable"));
+		println!("Converting {} files in ({}).", files.files_txt.len(), args.path.to_str()
+			.expect("The path should be readable"));
 	}
 
 	(files, args) = iter_files(files, args); // Process Files
@@ -230,7 +241,8 @@ fn order_files(args: Args) -> (Files, Args){
 
 fn read_dir(mut files: Files, args: &Args) -> Files{
 	for path in args.path.read_dir().expect("The path `FOLDER` is a directory and should be readable."){
-		files.push(path.expect("The directory `FOLDER` is readable, so it should not be erroring while iterating over it").path());
+		files.push(path.expect(
+			"The directory `FOLDER` is readable, so it should not be erroring while iterating over it").path());
 	}
 	return(files);
 }
@@ -242,6 +254,7 @@ fn iter_files(files: Files, args: Args) -> (Files, Args){
 	let mut not_first: bool = false; // Flag used to run thread sleep code between runs
 	let mut reader: BufReader<File>;
 	let mut buf: Vec<u8> = Vec::with_capacity(40000); //temp buf
+	let mut buf_splits: Option<Vec<usize>>; // Vector holding the splits of buf. Each element is the length next section. 
 	let mut changed_flag: bool;
 
 
@@ -252,7 +265,8 @@ fn iter_files(files: Files, args: Args) -> (Files, Args){
 
 		// Skip files with already existing mp3s, unless we are overwriting
 		if(files.contains(&file_mp3)){
-			println!("Skipping {}. An mp3 already exists.", file_mp3.to_str().expect("The file's path should be readable"));
+			println!("Skipping {}. An mp3 already exists.", file_mp3.to_str()
+				.expect("The file's path should be readable"));
 			continue;
 		}
 
@@ -263,19 +277,25 @@ fn iter_files(files: Files, args: Args) -> (Files, Args){
 
 		changed_flag = false;
 		reader = BufReader::new(File::open(file_txt).expect("The file should exist and be readable."));
-		while(has_data_left(&mut reader).expect("The buffer should be readable/mutable.")) //TODO: Switch to std has_data_left when no longer unstable.
-		{
+		//TODO: Switch to std has_data_left when no longer unstable.
+		while(has_data_left(&mut reader).expect("The buffer should be readable/mutable.")) {
+
+			// Check if I need to split at --split, read to split (into buf), else read to end.
 			if let Some(ref split_str) = args.split { // Split files at --split <STRING>
 				(buf, reader) = split_at_str(split_str.as_bytes(), buf, reader);
-				if(!changed_flag && has_data_left(&mut reader).expect("The buffer should be readable/mutable.")){
+				if(!changed_flag && has_data_left(&mut reader)
+					.expect("The buffer should be readable/mutable.")){
 					changed_flag = true
 				}
-			}else{
+			} else {
 				reader.read_to_end(&mut buf).expect("The buffer should be readable/mutable.");
 			}
 
-			//if(buf.len() > args.max){}
-			//maxlength
+			// Check if buf is too long (> --max). None if not, Some(vec of lenghts of split) if true
+ 			buf_splits = split_at_max(&buf, args.max);
+
+
+
 			//if(args.normalize)
 			//}if(args.abbreviations){}
 
@@ -284,47 +304,41 @@ fn iter_files(files: Files, args: Args) -> (Files, Args){
 			// store the changed/split input into a tmp file
 			if(changed_flag) {
 				split_count += 1;
-				file_tmp = file_txt.clone(); // TODO: figure out how to just return a cloned copy at the forloop iter
+				// TODO: figure out how to just return a cloned copy at the forloop iter
+				file_tmp = file_txt.clone();
 				file_tmp.set_extension(format!("{:03}.{}", split_count, FIXED_EXT));
 				File::create(&file_tmp).expect("Create a tmp file")
-				.write_all(&buf).expect("Write buf to rmp file");
+				.write_all(&buf).expect("Write buf to tmp file");
 				gtts(&file_tmp, &file_mp3, args.test);
 				fs::remove_file(file_tmp).expect("Delete tmp file after use.");
 			}else{
 				gtts(&file_txt, &file_mp3, args.test);
 			}
-			buf.clear();
+			buf.clear(); // Clear buf after writing
 		}
 	}
 	return(files, args);
 }
 
-/*TODO:remove
-/// The max length in bytes a single file can be before it gets split. [TODO]: Figure out if I am splitting by character or byte.
-max: u32,
+fn split_at_max(buf: &Vec<u8>, max: usize) -> Option<Vec<usize>> {
+	if((max == 0) || (buf.len() <= max)) {
+		return(None);
+	}
+	let splits: Vec<usize> = Vec::new();
+	let index: usize = 0;
+	// The average split length to evenly split buf with all peices being less than max
+	// Equates to CEIL(length / CEIL(length/max))
+	let mut split_size: usize = (buf.len() + max - 1) / max;
+	split_size = (buf.len() + split_size - 1) / split_size;
 
-/// The string(s) to split at if file is over max length. [TODO]
-///
-/// Tries to split at first string, if this fails moves to second and so on. If all fail, just splits at the exact character.
-/// Split happens after STRING.
-splitstr: Vec<String>,
 
-/// Remove non alphanumeric characters and normal punctuation. [TODO]
-///
-/// Done after splitting, so these unusual characters can be used for splitting purposes.
-#[arg(short, long)]
-normalize: bool,
+	while(index < buf.len()) {
 
-/// Fix troublesome abbreviations. [TODO]
-///
-/// "LV" is considered some currency, so I fix that as well as other level abreviations.
-/// "MP" Is read as Mega Pixel.
-/// [TODO]: some method to pick which to apply.
-#[arg(short, long)]
-abbreviations: bool,
-*/
+	}
+	return(Some(splits));
+}
 
-fn split_at_str(split_str: &[u8], mut buf: Vec<u8>, mut reader: BufReader<File>) -> (Vec<u8>, BufReader<File>){
+fn split_at_str(split_str: &[u8], mut buf: Vec<u8>, mut reader: BufReader<File>) -> (Vec<u8>, BufReader<File>) {
 	reader.read_until(split_str[split_str.len() - 1], &mut buf).expect("The file should be readable");
 
 	// If the reader starts with the split, look for next split
@@ -339,8 +353,8 @@ fn split_at_str(split_str: &[u8], mut buf: Vec<u8>, mut reader: BufReader<File>)
 	if(buf.ends_with(split_str)){ // If found and read the split_str, remove from buf, add back to reader.
 		// Used saturating_sub to handle the case where there aren't N elements in the vector
 		buf.truncate(buf.len().saturating_sub(split_str.len()));
-		reader.seek_relative(i64::try_from(split_str.len())
-			.expect("split_str better be WAY smaller than an i64 or something really weird is going on.") * -1) // Negate
+		reader.seek_relative(i64::try_from(split_str.len()) // seak negative length of split_str
+			.expect("split_str better be WAY smaller than an i64 or something really weird is going on.") * -1)
 		.expect("Should be able to unseek the search string");
 		return(buf, reader);
 	}
