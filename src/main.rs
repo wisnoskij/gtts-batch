@@ -61,8 +61,9 @@ struct Args{
 
 	/// Fix troublesome abbreviations. [TODO]
 	///
-	/// "LV" is considered some currency, so I fix that as well as other level abreviations.
+	/// "LV" is considered some currency, so I fix that as well as other level abbreviations.
 	/// "MP" Is read as Mega Pixel.
+	/// Done after splitting, so these technically these fixes can make a split go over the max length.
 	/// [TODO]: some method to pick which to apply.
 	#[arg(short, long)]
 	abbreviations: bool,
@@ -71,13 +72,13 @@ struct Args{
 	#[arg(short, long, value_name = "MINUTES", default_value_t = 5)]
 	wait: u64,
 
-	/// The <MILI> to wait in miliseconds (1/1000th of a second).
+	/// The <MILI> to wait in milliseconds (1/1000th of a second).
 	///
-	/// wait<time in munutes> is ignored if this argument is present.
+	/// wait<time in minutes> is ignored if this argument is present.
 	#[arg(short = None, long, value_name = "MILI")]
 	waitms: Option<u64>,
 
-	/// Split file(s) at every occurance of <STRING>. [TODO]
+	/// Split file(s) at every occurrence of <STRING>.
 	///
 	/// <STRING> begins the split.
 	/// Designed as the main user facing split mechanic. Designed around splitting by chapter.
@@ -85,24 +86,31 @@ struct Args{
 	#[arg(short, long, value_name = "STRING")]
 	split: Option<String>,
 
-	/// The max length in bytes a single file can be before it gets split.
+	/// The Max length in bytes a single file can be before it gets split.
+	///
 	/// Use max length to figure out number of splits a file needs,
-	/// then split at average.
-	/// [TODO]: Figure out if I am splitting by character or byte.
+	/// then split at average. This can cause trouble if the file is so evenly split that
+	/// their is no enough space to look for goods locations to split at.
 	#[arg(short, long, value_name = "MAX BYTES", default_value_t = 40000)]
 	max: usize,
 
-	/// The string(s) to split at if file is over max length. [TODO]
+	/// The Max variance from MAX LENGTH in bytes to search for splits.
+	///
+	/// Start searching at for a place to split a file at MAX, read backwards until MAX VARIANCE
+	#[arg(short = None, long, value_name = "MAX VARIANCE", default_value_t = 4000)]
+	max_var: usize,
+
+	/// The string(s) to split at if file is over max length.
 	///
 	/// Tries to split at first string, if this fails moves to second and so on. If all fail
 	/// just splits at the exact character.
 	/// Split happens after STRING.
 	#[arg(short = None, long, value_name = "STRING", default_values_t = 
 		vec![String::from("\n\n"), String::from("\n"), String::from(".")])]
-	splitstr: Vec<String>,
+	split_strs: Vec<String>,
 
 	/// Runs in testing mode, does everything except for calling google translate services and waiting between files.
-	/// [TODO]: prevent shutoff from running if in testing mode. Delete tmp files
+	/// [TODO]: prevent shutoff from running if in testing mode.
 	#[arg(short = None, long)]
 	test: bool
 }
@@ -254,9 +262,9 @@ fn iter_files(files: Files, args: Args) -> (Files, Args){
 	let mut not_first: bool = false; // Flag used to run thread sleep code between runs
 	let mut reader: BufReader<File>;
 	let mut buf: Vec<u8> = Vec::with_capacity(40000); //temp buf
-	let mut buf_splits: Option<Vec<usize>>; // Vector holding the splits of buf. Each element is the length next section. 
+	let mut buf_splits: Option<Vec<usize>>; // Vector holding the splits of buf. Each element is the length next section.
+	let mut buf_index: usize;
 	let mut changed_flag: bool;
-
 
 	for file_txt in &files.files_txt {
 		split_count = 0;
@@ -277,7 +285,7 @@ fn iter_files(files: Files, args: Args) -> (Files, Args){
 
 		changed_flag = false;
 		reader = BufReader::new(File::open(file_txt).expect("The file should exist and be readable."));
-		//TODO: Switch to std has_data_left when no longer unstable.
+
 		while(has_data_left(&mut reader).expect("The buffer should be readable/mutable.")) {
 
 			// Check if I need to split at --split, read to split (into buf), else read to end.
@@ -291,28 +299,30 @@ fn iter_files(files: Files, args: Args) -> (Files, Args){
 				reader.read_to_end(&mut buf).expect("The buffer should be readable/mutable.");
 			}
 
-			// Check if buf is too long (> --max). None if not, Some(vec of lenghts of split) if true
- 			buf_splits = split_at_max(&buf, args.max);
+			// Check if buf is too long (> --max). Return Iterator with the ending index of each section.
+			buf_index = 0;
+			for buf_splits in split_at_max(&buf, args.split_str.clone(), args.max, args.max_var){
+
+				//if(args.normalize)TODO
+				//}if(args.abbreviations){}TODO
 
 
+				// If the input file has been split or modified in anyway
+				// store the changed/split input into a tmp file
+				if(changed_flag || buf_splits != buf.len()) {
+					split_count += 1;
+					// TODO: figure out how to just return a cloned copy at the forloop iter
+					file_tmp = file_txt.clone();
+					file_tmp.set_extension(format!("{:03}.{}", split_count, FIXED_EXT));
+					File::create(&file_tmp).expect("Create a tmp file")
+					.write_all(&buf[buf_index..buf_splits]).expect("Write buf to tmp file");
+					buf_index = buf_splits+1; // Set index to the start of next section.
 
-			//if(args.normalize)
-			//}if(args.abbreviations){}
-
-
-			// If the input file has been split or modified in anyway
-			// store the changed/split input into a tmp file
-			if(changed_flag) {
-				split_count += 1;
-				// TODO: figure out how to just return a cloned copy at the forloop iter
-				file_tmp = file_txt.clone();
-				file_tmp.set_extension(format!("{:03}.{}", split_count, FIXED_EXT));
-				File::create(&file_tmp).expect("Create a tmp file")
-				.write_all(&buf).expect("Write buf to tmp file");
-				gtts(&file_tmp, &file_mp3, args.test);
-				fs::remove_file(file_tmp).expect("Delete tmp file after use.");
-			}else{
-				gtts(&file_txt, &file_mp3, args.test);
+					gtts(&file_tmp, &file_mp3, args.test);
+					fs::remove_file(file_tmp).expect("Delete tmp file after use.");
+				}else{
+					gtts(&file_txt, &file_mp3, args.test);
+				}
 			}
 			buf.clear(); // Clear buf after writing
 		}
@@ -320,22 +330,46 @@ fn iter_files(files: Files, args: Args) -> (Files, Args){
 	return(files, args);
 }
 
-fn split_at_max(buf: &Vec<u8>, max: usize) -> Option<Vec<usize>> {
+
+// Calc vector containing the ending index of each section to split buf at
+// to fit within Max, ideally being split at one of the split strings. 
+fn split_at_max(buf: &Vec<u8>, split_strs: Vec<String>, max: usize, max_variance: usize) -> Vec<usize> {
 	if((max == 0) || (buf.len() <= max)) {
-		return(None);
+		return(vec![buf.len() - 1]);
 	}
-	let splits: Vec<usize> = Vec::new();
+	let mut splits: Vec<usize> = Vec::new();
 	let index: usize = 0;
-	// The average split length to evenly split buf with all peices being less than max
+	let index_of: Vec<usize> = Vec::with_capacity(split_strs.len());
+	let split_u8vec: Vec<Vec<u8>> = split_strs.into_iter().map(|s| s.into_bytes()).collect();
+
+
+	// The average split length to evenly split buf with all pieces being less than max
 	// Equates to CEIL(length / CEIL(length/max))
 	let mut split_size: usize = (buf.len() + max - 1) / max;
 	split_size = (buf.len() + split_size - 1) / split_size;
 
-
 	while(index < buf.len()) {
+		if(index + max >= buf.len()){ // If the rest of the buf is less than max size
+			splits.push(buf.len() - 1);
+			return(splits);
+		}
 
+		index = find_split(buf, split_u8vec, index, max, max_variance);
+		splits.push(index);
 	}
-	return(Some(splits));
+	return(splits);
+}
+
+// Loop from the max value of the next split, backwards, for a length of max_variance
+fn find_split(buf: &Vec<u8>, split_u8vec:Vec<Vec<u8>>, index:usize, max:usize, max_variance:usize) -> usize {
+	for str_check in split_u8vec {
+		for next_split_index in ((index + max - max_variance)..(index + max)).rev() {
+			if(buf[next_split_index..].starts_with(&str_check))	{
+				return(next_split_index + str_check.len());
+			}
+		}
+	}
+	return(index + max);
 }
 
 fn split_at_str(split_str: &[u8], mut buf: Vec<u8>, mut reader: BufReader<File>) -> (Vec<u8>, BufReader<File>) {
@@ -346,14 +380,13 @@ fn split_at_str(split_str: &[u8], mut buf: Vec<u8>, mut reader: BufReader<File>)
 		reader.read_until(split_str[split_str.len() - 1], &mut buf).expect("The file should be readable");
 	}
 
-	// has_data_left is unstable beta apparentally. Look out for unexpected results.
 	if(!has_data_left(&mut reader).expect("The buffer should be readable/mutable.")){
 		return(buf, reader);
 	}
 	if(buf.ends_with(split_str)){ // If found and read the split_str, remove from buf, add back to reader.
 		// Used saturating_sub to handle the case where there aren't N elements in the vector
 		buf.truncate(buf.len().saturating_sub(split_str.len()));
-		reader.seek_relative(i64::try_from(split_str.len()) // seak negative length of split_str
+		reader.seek_relative(i64::try_from(split_str.len()) // seek negative length of split_str
 			.expect("split_str better be WAY smaller than an i64 or something really weird is going on.") * -1)
 		.expect("Should be able to unseek the search string");
 		return(buf, reader);
@@ -380,7 +413,7 @@ fn gtts(in_file: &PathBuf, out_file: &PathBuf, test: bool){
 	let mut out_file_tmp: PathBuf = in_file.clone();
 	out_file_tmp.set_extension(OUT_TMP);
 
-	if(!check_not_exist(&out_file_tmp) || !check_not_exist(&out_file)){ // incase it is a directory
+	if(!check_not_exist(&out_file_tmp) || !check_not_exist(&out_file)){ // in case it is a directory
 		println!("Skipping {}", in_file.to_str().expect("The file's path should be readable"));
 		return;
 	}
