@@ -1,68 +1,38 @@
 # gtts-batch
 
-Wrapper over gtts to handle large conversions. Batch converting many files, and spitting up large files into multiple smaller files. gtts-cli need to be installed for gtts-batch to function
+Wrapper over gtts to handle large conversions. Batch converting many files. gtts-cli need to be installed for gtts-batch to function
 
-Usage: gtts-batch [OPTIONS] [FOLDER/FILE]
-
-Arguments:
-  [FOLDER/FILE]
-          Folder to convert
-          
-          [default: .]
-
-Options:
-  -f, --from <FILE>
-          Start processing at FILE.txt alpha numerically (inclusive). [TODO]
-
-  -t, --to <FILE>
-          Stop processing at FILE.txt alpha numerically (inclusive). [TODO]
-
-  -o, --overwrite
-          Overwrite existing mp3 files instead of skipping
-
-  -r, --recurse
-          Recursively go into directories
-
-  -s, --shutdown
-          Shutdown system after finishing. [TODO]
-
-  -n, --normalize
-          Remove non alphanumeric characters and normal punctuation. [TODO]
-
-  -a, --abbreviations
-          Fix troublesome abbreviations. [TODO]
-          
-          "LV" is considered some currency, so I fix that as well as other level abreviations.
-
-  -w, --wait <MINUTES>
-          The <MINUTES> to wait in minutes
-          
-          [default: 5]
-
-  --waitms <MILI>
-          The <MILI> to wait in miliseconds (1/1000th of a second).
-          
-          wait<time in munutes> is ignored if this argument is present.
-
-  --split <STRING>
-          Split file(s) at every occurance of <STRING>. [TODO]
-          
-          <STRING> begins the split. This happens first, before checking for max length
-
-  -m, --max <BYTES>
-          The max length in bytes a single file can be before it gets split. [TODO]: Figure out if I am splitting by character or byte
-          
-          [default: 40000]
-
-  --splitstr <STRING>
-          The string(s) to split at. [TODO]
-          
-          Tries to split at first string, if this fails moves to second and so on. If all fail, just splits at the exact character. Split happens after STRING.
-          
-          [default: "\n\n" "\n" .]
-
-  -h, --help
-          Print help information (use `-h` for a summary)
-
-  -V, --version
-          Print version information
+usage: gtts-batch [OPTIONS] [FILE/FOLDER]
+CONTROLS:
+(Press the key and then enter to confirm)
+c, x, q
+        Exit the program after the current file is done.
+i, n
+        Turns off interactive mode, preventing typing from affecting the running of this process.
+s
+        Toggle if the program will shutdown the computer after finishing.
+h
+        Print this help information
+OPTIONS:
+-c, --code
+        Supply your own gtts code. "--file <FILE> --output <FILE>_gtts.mp3" will be appended
+-n, --nocount
+        Don't precount the files that will be converted to audio. [default: false]
+-i, --nointeract
+        Turn off all interactive options. [default: false]
+-o, --overwrite
+        Overwrite existing mp3 files. [default: false]
+-p, --path=<file/folder>
+        The path to the file or folder to run on. [default: .]
+-r, --recurse
+        Also include subfolders. This can be treated as a boolean or you can specify the max depth of subfolder traversal. [default: false]
+-s, --shutdown
+        Shutdown computer after finishing. [default: false]
+-t, --test
+        Run in test mode allowing you to see what files will be converted. [default: false]
+-w, --wait=<minutes>
+        How long to wait between requests to the server. [default: 5]
+-h, --help
+        Print help information.
+-v, --version
+        Print version information.
