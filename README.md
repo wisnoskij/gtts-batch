@@ -1,6 +1,9 @@
 # gtts-batch   
    
-Wrapper over gtts to handle large conversions. Batch converting many files. gtts-cli need to be installed for gtts-batch to function   
+Wrapper over gtts to handle batch converting many files. gtts-cli need to be installed for gtts-batch to function.   
+To use just copy executable into a folder with the .txt files you want to convert to audio and run.    
+
+You need to make sure the files are not too big, I believe the system is used as a screen reader but I have done up to 40kb without any problems as long as the wait time is big enough. You can reduce the wait time if the files are small enough but Google stops responding if you push it too far. You want to remove any weird characters you sometimes get on webpages, I think it is anything other than the standard ascii, if their is a character that gtts-cli does not like it returns an audio file up to that character.
 
 usage: gtts-batch [OPTIONS] [FILE/FOLDER]   
 CONTROLS:   
