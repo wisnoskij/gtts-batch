@@ -10,6 +10,7 @@ import (
 	"time"
 )
 
+// TODO: remove gtts dependency. https://cloud.google.com/text-to-speech/docs/libraries#client-libraries-install-go Looks easy.
 // TODO: a file input sanitizer
 func main() {
 	get_flags()
